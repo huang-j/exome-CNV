@@ -1,2 +1,2 @@
 # exome-CNV
-Scripts for whole exome CNV analysis
+Using gatk CNV from Broad and HapLOHseq
