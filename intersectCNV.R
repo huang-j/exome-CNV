@@ -2,85 +2,97 @@
 library(data.table)
 library(dplyr)
 library(stringr)
+# library(IRanges)
 
-## functions
-splitV <- function(dt){
-  dt[, Alter := sapply(V68, function(x){
-    tmp <- unlist(strsplit(x, ":"))
-    tmp <- unlist(strsplit(tmp[3], ","))
-    return(as.numeric(tmp[2]))
-  })]
-  dt[, Depth := sapply(V68, function(x){
-    tmp <- unlist(strsplit(x, ":"))
-    return(as.numeric(tmp[2]))
-  })]
-  dt[, MAF := Alter/Depth]
-  
-  ## filters
-  ## remove low allelic fractions (germline has this step later as well at .25)
-  # dt <- dt[MAF > 0.1 | Gene.refGene == "KRAS"]
-  dt <- dt[MAF >= 0.05]
-  ## scale by log2depth and remove too those too low
-  dt[, log2Depth := log2(Depth)]
-  dt[, Depth.z := scale(log2Depth), by="Chr"]
-  # dt <- dt[Depth.z > -1.5 | Gene.refGene == "KRAS"]
-  # dt <- dt[Depth.z > -2]
-  # ## optional (remove singletons)
-  # dt <- dt[Alter > 1 | Gene.refGene == "KRAS"]
-  # dt <- dt[Depth.z > -1.75]
-  return(dt)
-}
-
-dbFilter <- function(dt){
-  ## Exac
-  dt[, c("ExAC_ALL", "ExAC_AFR", "ExAC_AMR", "ExAC_EAS", "ExAC_FIN", "ExAC_NFE", "ExAC_OTH", "ExAC_SAS") := .(as.numeric(ExAC_ALL), as.numeric(ExAC_AFR), as.numeric(ExAC_AMR), as.numeric(ExAC_EAS), as.numeric(ExAC_FIN), as.numeric(ExAC_NFE), as.numeric(ExAC_OTH), as.numeric(ExAC_SAS))]
-  dt[is.na(ExAC_ALL), ExAC_ALL := 0]
-  dt[, ExacMax := pmax(ExAC_ALL, ExAC_AFR, ExAC_AMR, ExAC_EAS, ExAC_FIN, ExAC_NFE, ExAC_OTH, ExAC_SAS, na.rm=TRUE)]
-  dt <- dt[ExAC_ALL < 0.01 & ExacMax < 0.01]
-  dt[, c("Polyphen2_HDIV_score", "Polyphen2_HVAR_score") := .(as.numeric(Polyphen2_HDIV_score), as.numeric(Polyphen2_HVAR_score))]
-  
-  dt[, c("sift", "poly", "lrt", "taste", "provean", "vest", "cadd", "fathmm", "gerp", "siphy") := .(ifelse(SIFT_score == ".", NA, ifelse(as.numeric(SIFT_score) < 0.03, 1, 0)),
-                                                                                                    ifelse(Polyphen2_HDIV_score == ".", NA, ifelse(as.numeric(Polyphen2_HDIV_score) > 0.95 , 1, 0)),
-                                                                                                    ifelse(LRT_score == ".", NA, ifelse(as.numeric(LRT_score) < 0.005, 1, 0)),
-                                                                                                    ifelse(MutationTaster_score == ".", NA, ifelse(as.numeric(MutationTaster_score) > 0.995, 1, 0)),
-                                                                                                    ifelse(PROVEAN_score == ".", NA, ifelse(as.numeric(PROVEAN_score) < -2.4, 1, 0)),
-                                                                                                    ifelse(VEST3_score == ".", NA, ifelse(as.numeric(VEST3_score) > 0.75, 1, 0)),
-                                                                                                    ifelse(CADD_phred == ".", NA, ifelse(as.numeric(CADD_phred) > 22, 1, 0)),
-                                                                                                    ifelse(`fathmm-MKL_coding_score` == ".", NA, ifelse(as.numeric(`fathmm-MKL_coding_score`) > 0.92, 1, 0)),
-                                                                                                    ifelse(`GERP++_RS` == ".", NA, ifelse(as.numeric(`GERP++_RS`) > 4.4, 1, 0)),
-                                                                                                    ifelse(SiPhy_29way_logOdds == ".", NA, ifelse(as.numeric(SiPhy_29way_logOdds) > 14, 1, 0))
-  )]
-  dt[, dbRatio := (sum(sift, poly, lrt, taste, provean, vest, cadd, fathmm, gerp, siphy, na.rm = TRUE)/sum(!is.na(sift), !is.na(poly), !is.na(lrt), !is.na(taste), !is.na(provean), !is.na(vest), !is.na(cadd), !is.na(fathmm), !is.na(gerp), !is.na(siphy))), by=c("Chr", "Start")]
-  dt <- dt[dbRatio > 0.5]
-  
-  return(dt)
-}
-
-cosmicCounts <- function(x){
-  ## removes ID=COSMXXXX
-  prelist <- unlist(strsplit(x, ";"))
-  preoccur <- unlist(strsplit(prelist[2], "="))
-  occur <- unlist(strsplit(preoccur[2], ","))
-  occur <- gsub(".*[(]haematopoietic_and_lymphoid_tissue[)]", "0", occur)
-  occur <- lapply(occur, function(x){gsub("[(].*[)]", "", x)})
-  occur <- as.numeric(occur)
-  return(sum(occur))
-}
-
-## arguments 
 args = commandArgs(trailingOnly=TRUE)
-if (length(args)==0) {
-  stop("At least one argument must be supplied (input file).n", call.=FALSE)
-} else if (length(args)==1) {
+if (length(args)==0 | length(args)==1) {
+  stop("At least two argument must be supplied (input file).n", call.=FALSE)
+} else if (length(args)==2) {
   # default output file
-  args[2] = basename(args[1]) %>% str_replace(replacement = "", pattern = ".txt") %>% paste0(".filteredAnnotation.txt")
+  args[3] = "~/rsrch/PDAC_genelist_hg19.bed"
 }
+# args=c("~/rsrch/CNV/BW13_T_reseq_S4.umi/BW13_T_reseq_S4.umi.called.seg",
+#        "~/Downloads/crev2-dp10-family1-paired-events.txt",
+#        "~/rsrch/PDAC_genelist_hg19.bed")
 dn <- dirname(args[1])
 
-## read in files
-dt <- fread(args[1], sep="\t") %>% splitV %>% dbFilter
-dt <- dt[Func.refGene == "exonic" & !is.element(ExonicFunc.refGene, c("synonymous SNV"))]
-dt[, cosm := sapply(cosmic86, cosmicCounts)]
+samplename <- unlist(str_split(args[1], "/"))
+samplename <- unlist(str_split(samplename[length(samplename)], "[.]"))
+samplename <- samplename[1]
+if(samplename == "GV79-PBMC_S5"){
+  samplename <- "GV79-T_S6"
+}
+## genelist
+print("cnvGL")
+cnvGL <- fread(args[3], sep="\t", col.names = c("Chr", "Start", "End", "Gene stable ID", "Gene", "Transcript stable ID"))
+setkey(cnvGL, "Chr", "Start", "End")
+## arg 1 is Segmentation
+print("gseg")
+gseg <- fread(args[1], sep="\t", col.names=c("Chr", "Start", "End", "Markers", "Copy.Ratio", "g.Event"), skip = "CONTIG")
+setkey(gseg, "Chr", "Start", "End")
+## arg 2 is haploseqstuff
+print("hap")
+hap <- fread(args[2], sep="\t", col.names=c("Chr", "Start", "End", "EVENT_STATE", "NUM_INFORMATIVE_MARKERS", "MEAN_POSTPROB", "PHASE_CONCORDANCE",	"sample_id",	"baf",	"pval",	"mean_markers",	"sample_baf",	"baf_dev", "event"))
+setkey(hap, "Chr", "Start", "End")
+hap <- hap[grepl(samplename, sample_id)]
 
-write.table(dt,paste0(dn,"/",args[2]), sep="\t", quote = FALSE, row.names = FALSE)
+test <- foverlaps(gseg, cnvGL, type="any")
+colnames(test) <- c("Chr","Start","End","Gene stable ID","Gene","Transcript stable ID","g.Start","g.End","Markers","Copy.Ratio","g.Event")
+test2 <- foverlaps(test, hap, by.x=c("Chr", "g.Start", "g.End"), type="any")
+# test2 <- test2[!is.na(Gene)]
+test2 <- test2[, .(sample_id, Chr, Gene, i.Start, i.End, g.Start, g.End, Markers, Copy.Ratio, g.Event, Start, End,  MEAN_POSTPROB,  pval, NUM_INFORMATIVE_MARKERS, event, EVENT_STATE, PHASE_CONCORDANCE, baf,mean_markers, sample_baf, baf_dev, `Gene stable ID`, `Transcript stable ID`)]
+## if Haplo doesn't call it, then use g.Event (compared to copy ratio) if it does, then we need to run a comparison between the calls
+##            The comparison should be as follows:
+##                check if the calls are the same: if yes, then go with call
+##                    check pvalue
+##                if not we check to see if copy ratio. If ratio doesn't match call then we use ratio to determine the call
+test2[, sample_id := eval(samplename)]
+callTest <- function(MEAN_POSTPROB, g.Event, pval, event, Copy.Ratio, NUM_INFORMATIVE_MARKERS){
+  checkCopyRatio <- function(post_prob, Copy.Ratio){
+    if (!post_prob) {
+      cr <- 0.6
+    } else if(post_prob >= 0.9) {
+      cr <- 0.4
+    } else if(post_prob >= 0.85) {
+      cr <- 0.45
+    } else if(post_prob >= 0.8) {
+      cr <- 0.5
+    } else { return("0") }
+    if (Copy.Ratio > cr) {
+      return("+")
+    } else if ( Copy.Ratio < (-1 * (cr - .05 )) ){
+      return("-")
+    } else if (abs(Copy.Ratio) < 0.15){
+      return("0")
+    } else {
+      return("undetermined")
+    }
+  }
+  ## check markers first
+  ## is haploseq called?
+  if(is.na(MEAN_POSTPROB)){
+    checkCopyRatio(post_prob = FALSE, Copy.Ratio)
+  } else if (NUM_INFORMATIVE_MARKERS > 40) {
+    ## 
+    # if ( ( g.Event == "+" & event == "gain") | ( g.Event == "-" & event == "loss" )  ) {
+    #   if (pval < 0.05){
+    #     
+    #   } else { return("0")}
+    # } else if ( g.Event == "0" ) {
+    #   if(event == "cnloh"){ return("cnloh") }
+    #   else if (MEAN_POSTPROB > 0.8 & pval < 0.05) { return("cnloh")}
+    #   else { checkCopyRatio(g.Event, Copy.Ratio) }
+    # } else { checkCopyRatio(g.Event, Copy.Ratio) }
+    call <- checkCopyRatio(post_prob = MEAN_POSTPROB, Copy.Ratio)
+    if (call == "0") { 
+      if(event == "cnloh"){ return("cnloh") }
+      else if (MEAN_POSTPROB > 0.8) { return("cnloh") }
+      else { return(call) }
+    } else { return(call) }
+    
+  } else {return("0")}
+  
+}
+test2[, Call := mapply(callTest, as.numeric(MEAN_POSTPROB), g.Event, pval, event, as.numeric(Copy.Ratio), as.numeric(NUM_INFORMATIVE_MARKERS)), by=.(Chr, i.Start)]
 
+write.table(test2[Markers > 20], paste0(dn,"/",samplename,".hap.annotated.segs.tsv"), sep="\t", quote = FALSE, row.names = FALSE)
