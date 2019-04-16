@@ -3,7 +3,7 @@
 usage() {
     echo "Usage: $0 [-l <string>] [-o <string>] "
     echo "        -l file containing names of samples to be used"
-    echo "                e.g. MK29-T_S4"
+    echo "                e.g. MK29-T_S4.counts.hdf5"
     echo "        -o output file name"
     exit 1;
 }
@@ -29,11 +29,11 @@ fi
 
 vars=""
 for s in $(cat ${l}); do
-    vars=${vars}"-I CNV/${s}.counts.hdf5 "
+    vars=${vars}"-I ${s} "
 done
 
 echo ${vars}
 
-gatk --java-options "-Xmx64G" CreateReadCountPanelOfNormals ${vars} \
+gatk --java-options "-Xmx32G" CreateReadCountPanelOfNormals ${vars} \
      --minimum-interval-median-percentile 5.0 \
-     -O CNV/${o}.pon.hdf5
+     -O ${o}.pon.hdf5
