@@ -1,8 +1,12 @@
 # exome-CNV
 Using gatk CNV from Broad and HapLOHseq
 
-crCounts
-  > Normals 
-    > createPoN
-  > pCNV
-    > segMent
+1) crCounts
+  
+   1a)Normals 
+    
+   1b)createPoN
+  
+2) pCNV
+   
+3) segMent
